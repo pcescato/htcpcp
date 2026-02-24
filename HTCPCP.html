@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTCPCP/1.0 — Coffee Control Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0a0a08;
+    --panel: #111110;
+    --border: #2a2a24;
+    --coffee: #c8843a;
+    --coffee-light: #e8a85a;
+    --tea: #7ab87a;
+    --error: #e05a5a;
+    --text: #d4cfc0;
+    --text-dim: #6a6558;
+    --mono: 'Share Tech Mono', monospace;
+    --display: 'Bebas Neue', cursive;
+    --body: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  header {
+    padding: 2rem 3rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+  }
+
+  header h1 {
+    font-family: var(--display);
+    font-size: 3.2rem;
+    letter-spacing: 0.05em;
+    color: var(--coffee);
+    line-height: 1;
+  }
+
+  header .proto {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 0.25rem 0.6rem;
+    border-radius: 3px;
+  }
+
+  header .rfc {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr 320px;
+    gap: 0;
+    height: calc(100vh - 90px);
+  }
+
+  .panel {
+    border-right: 1px solid var(--border);
+    padding: 1.5rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+  }
+
+  .panel:last-child { border-right: none; }
+
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Pot Cards ── */
+  .pot-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pot-card:hover { border-color: var(--coffee); transform: translateY(-1px); }
+  .pot-card.selected { border-color: var(--coffee); background: #161410; }
+  .pot-card.teapot:hover { border-color: var(--tea); }
+  .pot-card.teapot.selected { border-color: var(--tea); }
+
+  .pot-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+  }
+
+  .pot-icon { font-size: 1.8rem; line-height: 1; }
+  .pot-name { font-family: var(--display); font-size: 1.3rem; letter-spacing: 0.05em; }
+  .pot-type {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .pot-type.coffee { background: #3a2010; color: var(--coffee); }
+  .pot-type.teapot { background: #102a10; color: var(--tea); }
+
+  .pot-bar-wrap {
+    background: #1a1a14;
+    border-radius: 2px;
+    height: 4px;
+    margin-top: 0.8rem;
+    overflow: hidden;
+  }
+  .pot-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+  .pot-bar.coffee { background: linear-gradient(90deg, #8b4a10, var(--coffee)); }
+  .pot-bar.tea { background: linear-gradient(90deg, #2a6a2a, var(--tea)); }
+
+  .pot-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .status-dot.brewing { background: var(--coffee); animation: pulse 1s infinite; }
+  .status-dot.pouring-milk { background: #aaaaff; animation: pulse 0.6s infinite; }
+  .status-dot.ready { background: #44aa44; }
+  .status-dot.idle { background: var(--text-dim); }
+  .status-dot.error { background: var(--error); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Center panel ── */
+  .center { border-right: 1px solid var(--border); }
+
+  .request-builder {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2rem;
+  }
+
+  .method-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .method-btn {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: all 0.15s;
+  }
+
+  .method-btn:hover { border-color: var(--coffee); color: var(--coffee); }
+  .method-btn.active { background: var(--coffee); border-color: var(--coffee); color: #0a0a08; font-weight: 600; }
+  .method-btn.brew.active { background: var(--coffee); }
+  .method-btn.get.active { background: #3a6aaa; border-color: #3a6aaa; color: white; }
+  .method-btn.propfind.active { background: #6a3aaa; border-color: #6a3aaa; color: white; }
+  .method-btn.when.active { background: #aaaaff; border-color: #aaaaff; color: #0a0a08; }
+
+  .uri-bar {
+    display: flex;
+    align-items: center;
+    background: #0d0d0c;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.8rem;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+
+  .uri-scheme { color: var(--coffee-light); }
+  .uri-path { color: var(--text); flex: 1; }
+
+  .additions-section { margin-bottom: 1rem; }
+  .additions-label {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 0.5rem;
+  }
+
+  .additions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+
+  .addition-btn {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 3px;
+    text-align: left;
+    transition: all 0.15s;
+  }
+
+  .addition-btn:hover { border-color: var(--coffee); color: var(--text); }
+  .addition-btn.selected { border-color: var(--coffee); color: var(--coffee); background: #1e1208; }
+  .addition-btn.decaf { }
+  .addition-btn.decaf:hover { border-color: var(--error); color: var(--error); }
+
+  .brew-btn {
+    width: 100%;
+    padding: 0.9rem;
+    background: var(--coffee);
+    border: none;
+    border-radius: 4px;
+    font-family: var(--display);
+    font-size: 1.2rem;
+    letter-spacing: 0.1em;
+    color: #0a0a08;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .brew-btn:hover { background: var(--coffee-light); transform: translateY(-1px); }
+  .brew-btn:active { transform: translateY(0); }
+  .brew-btn:disabled { background: var(--border); color: var(--text-dim); cursor: not-allowed; transform: none; }
+
+  /* Brew progress */
+  .brew-progress {
+    margin-top: 1.2rem;
+    display: none;
+  }
+  .brew-progress.active { display: block; }
+
+  .progress-bar-wrap {
+    background: #1a1a14;
+    border-radius: 3px;
+    height: 6px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #8b4a10, var(--coffee), var(--coffee-light));
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  .progress-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  /* WHEN button */
+  .when-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--border);
+    display: none;
+  }
+  .when-section.active { display: block; }
+
+  .when-btn {
+    width: 100%;
+    padding: 0.7rem;
+    background: transparent;
+    border: 1px solid #aaaaff;
+    border-radius: 4px;
+    font-family: var(--display);
+    font-size: 1rem;
+    letter-spacing: 0.1em;
+    color: #aaaaff;
+    cursor: pointer;
+    transition: all 0.15s;
+    animation: when-pulse 2s infinite;
+  }
+  .when-btn:hover { background: #aaaaff22; }
+
+  @keyframes when-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 #aaaaff33; }
+    50% { box-shadow: 0 0 0 6px #aaaaff00; }
+  }
+
+  /* Response display */
+  .response-panel {
+    background: #0d0d0c;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    min-height: 120px;
+  }
+
+  .response-status {
+    font-size: 1rem;
+    font-family: var(--display);
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.05em;
+  }
+
+  .status-200 { color: #44aa44; }
+  .status-406 { color: #aaaa44; }
+  .status-418 { color: var(--coffee); }
+  .status-error { color: var(--error); }
+
+  .response-body {
+    color: var(--text-dim);
+    line-height: 1.7;
+    white-space: pre;
+  }
+
+  /* ── Log panel ── */
+  .log-entry {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    padding: 0.5rem 0.7rem;
+    border-left: 2px solid var(--border);
+    margin-bottom: 0.5rem;
+    background: var(--panel);
+    border-radius: 0 3px 3px 0;
+    animation: logIn 0.2s ease;
+  }
+
+  @keyframes logIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-entry.brew { border-color: var(--coffee); }
+  .log-entry.get { border-color: #3a6aaa; }
+  .log-entry.propfind { border-color: #6a3aaa; }
+  .log-entry.when { border-color: #aaaaff; }
+  .log-entry.error-418 { border-color: var(--coffee); background: #1e1208; }
+  .log-entry.error-406 { border-color: var(--error); background: #1e0808; }
+
+  .log-method { color: var(--coffee); margin-right: 0.4rem; }
+  .log-entry.get .log-method { color: #3a6aaa; }
+  .log-entry.propfind .log-method { color: #6a3aaa; }
+  .log-entry.when .log-method { color: #aaaaff; }
+  .log-entry.error-418 .log-method { color: var(--coffee-light); }
+  .log-entry.error-406 .log-method { color: var(--error); }
+
+  .log-time { color: var(--text-dim); float: right; }
+  .log-detail { color: var(--text-dim); margin-top: 0.2rem; font-size: 0.6rem; }
+
+  /* Stats row */
+  .stats-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.7rem;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: var(--display);
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--coffee);
+  }
+
+  .stat-num.tea { color: var(--tea); }
+  .stat-num.err { color: var(--error); }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 0.3rem;
+  }
+
+  /* Teapot animation */
+  .teapot-anim {
+    text-align: center;
+    padding: 1rem 0;
+    display: none;
+  }
+  .teapot-anim.active { display: block; }
+  .teapot-anim .teapot-emoji {
+    font-size: 3.5rem;
+    display: inline-block;
+    animation: tip 0.5s ease-in-out infinite alternate;
+    transform-origin: center bottom;
+  }
+  @keyframes tip {
+    from { transform: rotate(-15deg); }
+    to { transform: rotate(15deg); }
+  }
+  .teapot-msg {
+    font-family: var(--display);
+    font-size: 1.1rem;
+    color: var(--coffee);
+    letter-spacing: 0.1em;
+    margin-top: 0.5rem;
+  }
+
+  /* Brewing animation */
+  .brew-anim {
+    text-align: center;
+    padding: 0.5rem 0;
+    display: none;
+  }
+  .brew-anim.active { display: block; }
+  .brew-cups {
+    font-size: 2rem;
+    letter-spacing: 0.3rem;
+    animation: steam 1.5s ease-in-out infinite;
+  }
+  @keyframes steam {
+    0%, 100% { filter: blur(0px); opacity: 1; }
+    50% { filter: blur(1px); opacity: 0.7; }
+  }
+
+  select {
+    background: #0d0d0c;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 3px;
+    width: 100%;
+    margin-bottom: 0.8rem;
+    cursor: pointer;
+  }
+  select:focus { outline: none; border-color: var(--coffee); }
+
+  .section-subtitle {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 0.5rem;
+  }
+
+  /* RFC spec popover */
+  .rfc-hint {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    background: #0d0d0c;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    padding: 0.5rem 0.7rem;
+    line-height: 1.6;
+    margin-top: 0.5rem;
+  }
+
+  .scrollbar-hide { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+  /* ── Milk pouring state ── */
+  .milk-indicator {
+    display: none;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: #aaaaff;
+    text-align: center;
+    padding: 0.4rem;
+    border: 1px solid #aaaaff44;
+    border-radius: 3px;
+    margin-top: 0.6rem;
+    animation: pulse 0.8s infinite;
+  }
+  .milk-indicator.active { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HTCPCP</h1>
+  <span class="proto">HTCPCP/1.0</span>
+  <span class="proto">RFC 2324 + RFC 7168</span>
+  <span class="rfc">☕ Hyper Text Coffee Pot Control Protocol · 1 April 1998</span>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: Pot registry -->
+  <div class="panel scrollbar-hide">
+    <div class="panel-title">Pot Registry</div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-num" id="stat-brews">0</div>
+        <div class="stat-label">Brews</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num tea" id="stat-418">0</div>
+        <div class="stat-label">418 Fired</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num err" id="stat-406">0</div>
+        <div class="stat-label">406 Decaf</div>
+      </div>
+    </div>
+
+    <div id="pot-list"></div>
+
+    <div class="rfc-hint">
+      <strong style="color: var(--text)">RFC 2324 §2.3.2</strong><br>
+      418: Any attempt to brew coffee with a teapot should result in the error code "418 I'm a teapot". The resulting entity body MAY be short and stout.
+    </div>
+
+    <div class="rfc-hint">
+      <strong style="color: var(--text)">RFC 2324 §2.1.3 — WHEN</strong><br>
+      Sent when the client determines that enough milk has been poured into the coffee. The server should stop pouring immediately.
+    </div>
+  </div>
+
+  <!-- CENTER: Request builder -->
+  <div class="panel center scrollbar-hide">
+    <div class="panel-title">Request Builder</div>
+
+    <div class="request-builder">
+      <div class="section-subtitle">Method</div>
+      <div class="method-row">
+        <button class="method-btn brew active" onclick="setMethod('BREW')">BREW</button>
+        <button class="method-btn get" onclick="setMethod('GET')">GET</button>
+        <button class="method-btn propfind" onclick="setMethod('PROPFIND')">PROPFIND</button>
+        <button class="method-btn when" onclick="setMethod('WHEN')">WHEN</button>
+      </div>
+
+      <div class="section-subtitle">URI</div>
+      <div class="uri-bar">
+        <span class="uri-scheme" id="uri-scheme">coffee://</span>
+        <span class="uri-path" id="uri-path">pot-1/brew</span>
+      </div>
+
+      <div class="section-subtitle">Target Pot</div>
+      <select id="pot-select" onchange="selectPot(this.value)">
+      </select>
+
+      <div class="additions-section" id="additions-section">
+        <div class="additions-label">Accept-Additions Header</div>
+        <div class="additions-grid" id="additions-grid">
+          <button class="addition-btn selected" onclick="toggleAddition(this, 'milk-type=Whole-milk')">🥛 Whole Milk</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'milk-type=Cream')">🫙 Cream</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'milk-type=Non-Dairy')">🌱 Non-Dairy</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'syrup-type=Vanilla')">🍦 Vanilla</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'syrup-type=Chocolate')">🍫 Chocolate</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'syrup-type=Raspberry')">🫐 Raspberry</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'sweetener-type=Sugar')">🍬 Sugar</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'alcohol-type=Whisky')">🥃 Whisky</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'alcohol-type=Rum')">🍹 Rum</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'alcohol-type=Kahlua')">☕ Kahlua</button>
+          <button class="addition-btn decaf" onclick="toggleAddition(this, 'decaf=true')" title="Vraiment ?">☠️ Décaféiné</button>
+          <button class="addition-btn" onclick="toggleAddition(this, 'spice-type=Cinnamon')">🌿 Cinnamon</button>
+        </div>
+      </div>
+
+      <div class="teapot-anim" id="teapot-anim">
+        <div class="teapot-emoji">🫖</div>
+        <div class="teapot-msg">I'm a teapot.</div>
+      </div>
+
+      <button class="brew-btn" id="brew-btn" onclick="sendRequest()">
+        ☕ BREW
+      </button>
+
+      <div class="milk-indicator" id="milk-indicator">
+        🥛 Pouring milk... send WHEN to stop
+      </div>
+
+      <div class="when-section" id="when-section">
+        <button class="when-btn" onclick="sendWhen()">🛑 WHEN — Stop the milk!</button>
+      </div>
+
+      <div class="brew-progress" id="brew-progress">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-label" id="progress-label">Brewing...</div>
+      </div>
+
+      <div class="brew-anim" id="brew-anim">
+        <div class="brew-cups">☕ ☕ ☕</div>
+      </div>
+    </div>
+
+    <!-- Response -->
+    <div class="panel-title" style="margin-top: 0.5rem">Response</div>
+    <div class="response-panel" id="response-panel">
+      <div class="response-status" id="response-status" style="color: var(--text-dim)">— En attente —</div>
+      <div class="response-body" id="response-body"></div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT: Log -->
+  <div class="panel scrollbar-hide">
+    <div class="panel-title">Access Log</div>
+    <div id="log-list">
+      <div style="font-family: var(--mono); font-size: 0.65rem; color: var(--text-dim); text-align: center; padding: 2rem 0;">
+        Aucune requête.<br>Le café attend.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+
+const POTS = [
+  {
+    id: 'pot-1',
+    name: 'Pot #1',
+    type: 'coffee',
+    icon: '☕',
+    capacity: 12,
+    level: 8,
+    status: 'idle',
+    varieties: ['Espresso', 'Lungo', 'Americano'],
+    brewHistory: [],
+  },
+  {
+    id: 'pot-2',
+    name: 'Pot #2',
+    type: 'coffee',
+    icon: '☕',
+    capacity: 6,
+    level: 2,
+    status: 'idle',
+    varieties: ['Espresso'],
+    brewHistory: [],
+  },
+  {
+    id: 'kettle-1',
+    name: 'Kettle #1',
+    type: 'teapot',
+    icon: '🫖',
+    capacity: 8,
+    level: 6,
+    status: 'idle',
+    varieties: ['Earl Grey', 'Chamomile', 'Darjeeling'],
+    brewHistory: [],
+  },
+  {
+    id: 'kettle-2',
+    name: 'Kettle #2',
+    type: 'teapot',
+    icon: '🫖',
+    capacity: 4,
+    level: 4,
+    status: 'idle',
+    varieties: ['Oolong'],
+    brewHistory: [],
+  },
+];
+
+let selectedPotId = 'pot-1';
+let currentMethod = 'BREW';
+let selectedAdditions = ['milk-type=Whole-milk'];
+let isBrewing = false;
+let milkPouring = false;
+let brewTimer = null;
+let progressInterval = null;
+
+// Stats
+let stats = { brews: 0, t418: 0, t406: 0 };
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+function init() {
+  renderPotList();
+  renderPotSelect();
+  updateUIForMethod();
+}
+
+function renderPotList() {
+  const container = document.getElementById('pot-list');
+  container.innerHTML = '';
+  POTS.forEach(pot => {
+    const card = document.createElement('div');
+    card.className = `pot-card ${pot.type} ${pot.id === selectedPotId ? 'selected' : ''}`;
+    card.onclick = () => { selectedPotId = pot.id; document.getElementById('pot-select').value = pot.id; renderPotList(); updateUIForMethod(); updateURI(); };
+    card.innerHTML = `
+      <div class="pot-header">
+        <span class="pot-icon">${pot.icon}</span>
+        <span class="pot-name">${pot.name}</span>
+        <span class="pot-type ${pot.type}">${pot.type}</span>
+      </div>
+      <div style="font-family: var(--mono); font-size: 0.62rem; color: var(--text-dim)">
+        <span class="status-dot ${pot.status}"></span>
+        ${pot.status.toUpperCase()} · ${pot.level}/${pot.capacity} cups
+      </div>
+      <div class="pot-bar-wrap">
+        <div class="pot-bar ${pot.type === 'teapot' ? 'tea' : 'coffee'}" style="width: ${(pot.level/pot.capacity)*100}%"></div>
+      </div>
+      <div class="pot-meta">
+        <span>${pot.varieties.join(', ')}</span>
+        <span>${pot.brewHistory.length} brews</span>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function renderPotSelect() {
+  const sel = document.getElementById('pot-select');
+  sel.innerHTML = '';
+  POTS.forEach(pot => {
+    const opt = document.createElement('option');
+    opt.value = pot.id;
+    opt.textContent = `${pot.icon} ${pot.name} (${pot.type}) — coffee://${pot.id}/brew`;
+    sel.appendChild(opt);
+  });
+  sel.value = selectedPotId;
+}
+
+function selectPot(id) {
+  selectedPotId = id;
+  renderPotList();
+  updateUIForMethod();
+  updateURI();
+}
+
+function getPot(id) { return POTS.find(p => p.id === (id || selectedPotId)); }
+
+// ── Method & URI ───────────────────────────────────────────────────────────
+
+function setMethod(m) {
+  currentMethod = m;
+  document.querySelectorAll('.method-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.method-btn.${m.toLowerCase()}`).classList.add('active');
+  updateUIForMethod();
+  updateURI();
+}
+
+function updateURI() {
+  const pot = getPot();
+  const scheme = pot.type === 'teapot' ? 'tea://' : 'coffee://';
+  document.getElementById('uri-scheme').textContent = scheme;
+  const paths = { BREW: `${pot.id}/brew`, GET: `${pot.id}/status`, PROPFIND: `${pot.id}/additions`, WHEN: `${pot.id}/stop-milk` };
+  document.getElementById('uri-path').textContent = paths[currentMethod];
+}
+
+function updateUIForMethod() {
+  const pot = getPot();
+  const isTeapot = pot.type === 'teapot';
+  const brewBtn = document.getElementById('brew-btn');
+  const addSect = document.getElementById('additions-section');
+  const teapotAnim = document.getElementById('teapot-anim');
+
+  document.getElementById('teapot-anim').classList.remove('active');
+  addSect.style.display = 'block';
+
+  const labels = { BREW: isTeapot ? '🫖 BREW (→ 418)' : '☕ BREW', GET: '📊 GET STATUS', PROPFIND: '🔍 PROPFIND', WHEN: '🛑 WHEN' };
+  brewBtn.textContent = labels[currentMethod];
+
+  if (currentMethod === 'WHEN') {
+    addSect.style.display = 'none';
+    brewBtn.style.background = '#aaaaff';
+    brewBtn.style.color = '#0a0a08';
+  } else {
+    brewBtn.style.background = isTeapot && currentMethod === 'BREW' ? '' : '';
+    brewBtn.style.color = '';
+    if (isTeapot && currentMethod === 'BREW') {
+      teapotAnim.classList.add('active');
+    }
+  }
+  updateURI();
+}
+
+// ── Additions ─────────────────────────────────────────────────────────────
+
+function toggleAddition(btn, value) {
+  btn.classList.toggle('selected');
+  if (btn.classList.contains('selected')) {
+    selectedAdditions.push(value);
+  } else {
+    selectedAdditions = selectedAdditions.filter(a => a !== value);
+  }
+}
+
+// ── Request execution ─────────────────────────────────────────────────────
+
+function sendRequest() {
+  if (currentMethod === 'WHEN') { sendWhen(); return; }
+
+  const pot = getPot();
+
+  // Route by method
+  if (currentMethod === 'GET') {
+    simulateGET(pot);
+  } else if (currentMethod === 'PROPFIND') {
+    simulatePROPFIND(pot);
+  } else {
+    // BREW
+    simulateBREW(pot);
+  }
+}
+
+function simulateBREW(pot) {
+  if (isBrewing) return;
+
+  // Check: teapot trying to brew coffee?
+  if (pot.type === 'teapot') {
+    respond418(pot);
+    return;
+  }
+
+  // Check: decaf?
+  if (selectedAdditions.includes('decaf=true')) {
+    respond406(pot, 'Decaffeinated coffee? What\'s the point?\nRFC 2324 §2.1.1: No decaf option defined. Intentionally.');
+    return;
+  }
+
+  // Check: pot is empty?
+  if (pot.level === 0) {
+    respondError(503, pot, 'Service Unavailable', 'Pot is empty. Please refill.');
+    return;
+  }
+
+  // All good — BREW!
+  isBrewing = true;
+  pot.status = 'brewing';
+  renderPotList();
+
+  stats.brews++;
+  document.getElementById('stat-brews').textContent = stats.brews;
+
+  const addStr = selectedAdditions.filter(a => a !== 'decaf=true').join('; ') || 'none';
+  const hasMilk = selectedAdditions.some(a => a.startsWith('milk-type'));
+  const brewId = pot.brewHistory.length + 1;
+
+  pot.brewHistory.push({ id: brewId, ts: Date.now(), additions: addStr });
+
+  addLog('brew', 'BREW', `coffee://${pot.id}/brew`, 200, addStr);
+
+  // Start progress
+  let progress = 0;
+  const brewDuration = hasMilk ? 4000 : 3000; // Milk takes longer
+  const brewProgress = document.getElementById('brew-progress');
+  const progressFill = document.getElementById('progress-fill');
+  const progressLabel = document.getElementById('progress-label');
+  const brewAnim = document.getElementById('brew-anim');
+  const brewBtn = document.getElementById('brew-btn');
+
+  brewBtn.disabled = true;
+  brewProgress.classList.add('active');
+  brewAnim.classList.add('active');
+
+  respondInProgress(pot, brewId, addStr);
+
+  const steps = [
+    [15, 'Grinding beans...'],
+    [35, 'Heating water...'],
+    [60, 'Extracting...'],
+    [75, hasMilk ? 'Brewing + milk incoming...' : 'Filtering...'],
+    [90, 'Almost ready...'],
+    [100, 'Done ☕'],
+  ];
+  let stepIdx = 0;
+
+  progressInterval = setInterval(() => {
+    progress += 2;
+    progressFill.style.width = progress + '%';
+    if (stepIdx < steps.length && progress >= steps[stepIdx][0]) {
+      progressLabel.textContent = steps[stepIdx][1];
+
+      // Milk pouring phase
+      if (hasMilk && steps[stepIdx][1].includes('milk')) {
+        milkPouring = true;
+        document.getElementById('milk-indicator').classList.add('active');
+        document.getElementById('when-section').classList.add('active');
+        pot.status = 'pouring-milk';
+        renderPotList();
+      }
+
+      stepIdx++;
+    }
+    if (progress >= 100) {
+      clearInterval(progressInterval);
+      finishBrew(pot, brewId, addStr, hasMilk);
+    }
+  }, brewDuration / 50);
+}
+
+function finishBrew(pot, brewId, addStr, hasMilk) {
+  isBrewing = false;
+  milkPouring = false;
+  pot.status = 'ready';
+  pot.level = Math.max(0, pot.level - 1);
+
+  document.getElementById('milk-indicator').classList.remove('active');
+  document.getElementById('when-section').classList.remove('active');
+  document.getElementById('brew-progress').classList.remove('active');
+  document.getElementById('brew-anim').classList.remove('active');
+  document.getElementById('brew-btn').disabled = false;
+  document.getElementById('progress-fill').style.width = '0%';
+
+  renderPotList();
+
+  const body = JSON.stringify({
+    brew_id: brewId,
+    status: 200,
+    message: "Coffee is ready.",
+    pot: pot.id,
+    "accept-additions": addStr,
+    duration_ms: 3000,
+    protocol: "HTCPCP/1.0"
+  }, null, 2);
+
+  showResponse(200, '200 OK — Coffee is ready', body);
+
+  // Reset status to idle after 3s
+  setTimeout(() => {
+    pot.status = 'idle';
+    renderPotList();
+  }, 3000);
+}
+
+function simulateGET(pot) {
+  addLog('get', 'GET', `coffee://${pot.id}/status`, 200, '');
+  const body = JSON.stringify({
+    pot_id: pot.id,
+    type: pot.type,
+    status: pot.status,
+    level: `${pot.level}/${pot.capacity} cups`,
+    protocol: "HTCPCP/1.0",
+    varieties: pot.varieties,
+    brew_count: pot.brewHistory.length,
+  }, null, 2);
+  showResponse(200, '200 OK', body);
+}
+
+function simulatePROPFIND(pot) {
+  addLog('propfind', 'PROPFIND', `coffee://${pot.id}/additions`, 200, '');
+  const body = JSON.stringify({
+    "addition-type": "*",
+    "milk-type": ["Cream", "Half-and-half", "Whole-milk", "Part-Skim", "Skim", "Non-Dairy"],
+    "syrup-type": ["Vanilla", "Almond", "Raspberry", "Chocolate"],
+    "sweetener-type": ["Sugar", "Honey", "Artificial"],
+    "spice-type": ["Cinnamon", "Cardamom"],
+    "alcohol-type": ["Whisky", "Rum", "Kahlua", "Aquavit"],
+    "decaf": "NOT_ACCEPTABLE — What's the point? (RFC 2324 §2.1.1)"
+  }, null, 2);
+  showResponse(200, '200 OK — Additions available', body);
+}
+
+function sendWhen() {
+  if (!milkPouring) {
+    const pot = getPot();
+    // If no milk was pouring, still valid RFC request
+    const body = JSON.stringify({
+      message: "WHEN acknowledged.",
+      note: "No milk was being poured, but your enthusiasm is appreciated.",
+      protocol: "HTCPCP/1.0"
+    }, null, 2);
+    addLog('when', 'WHEN', `coffee://${selectedPotId}/stop-milk`, 200, 'Milk was not pouring');
+    showResponse(200, '200 OK — WHEN acknowledged', body);
+    return;
+  }
+
+  // Stop milk!
+  milkPouring = false;
+  document.getElementById('milk-indicator').classList.remove('active');
+  document.getElementById('when-section').classList.remove('active');
+
+  const pot = getPot();
+  pot.status = 'brewing';
+  renderPotList();
+
+  addLog('when', 'WHEN', `coffee://${selectedPotId}/stop-milk`, 200, 'Milk stopped');
+
+  const body = JSON.stringify({
+    status: 200,
+    message: "Milk pouring stopped.",
+    detail: "The server has acknowledged WHEN and stopped the milk stream.",
+    protocol: "HTCPCP/1.0",
+    rfc: "RFC 2324 §2.1.3"
+  }, null, 2);
+
+  showResponse(200, '200 OK — Milk stopped', body);
+}
+
+function respond418(pot) {
+  stats.t418++;
+  document.getElementById('stat-418').textContent = stats.t418;
+  addLog('error-418', 'BREW', `coffee://${pot.id}/brew`, 418, 'Teapot detected');
+
+  const body = JSON.stringify({
+    status: 418,
+    error: "I'm a teapot",
+    body: "The requested entity body is short and stout.",
+    hint: "Tip me over and pour me out.",
+    pot_id: pot.id,
+    pot_type: "teapot",
+    rfc: "RFC 2324 §2.3.2",
+    suggestion: "Use a CoffeePot. Try coffee://pot-1/brew"
+  }, null, 2);
+
+  showResponse(418, '418 I\'m a Teapot', body);
+}
+
+function respond406(pot, reason) {
+  stats.t406++;
+  document.getElementById('stat-406').textContent = stats.t406;
+  addLog('error-406', 'BREW', `coffee://${pot.id}/brew`, 406, reason);
+
+  const body = JSON.stringify({
+    status: 406,
+    error: "Not Acceptable",
+    detail: reason,
+    acceptable_alternatives: pot.varieties,
+    rfc: "RFC 2324 §2.3.1"
+  }, null, 2);
+
+  showResponse(406, '406 Not Acceptable', body);
+}
+
+function respondError(code, pot, title, detail) {
+  addLog('error-406', 'BREW', `coffee://${pot.id}/brew`, code, detail);
+  const body = JSON.stringify({ status: code, error: title, detail });
+  showResponse(code, `${code} ${title}`, body);
+}
+
+function respondInProgress(pot, brewId, addStr) {
+  const body = JSON.stringify({
+    status: 200,
+    brew_id: brewId,
+    message: "Brewing initiated.",
+    pot: pot.id,
+    "accept-additions": addStr,
+    protocol: "HTCPCP/1.0"
+  }, null, 2);
+  showResponse(200, '200 OK — Brewing...', body);
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+
+function showResponse(code, label, body) {
+  const statusEl = document.getElementById('response-status');
+  const bodyEl = document.getElementById('response-body');
+  const cls = code === 200 ? 'status-200' : code === 418 ? 'status-418' : code === 406 ? 'status-406' : 'status-error';
+  statusEl.className = `response-status ${cls}`;
+  statusEl.textContent = label;
+  bodyEl.textContent = body;
+}
+
+function addLog(type, method, uri, code, detail) {
+  const container = document.getElementById('log-list');
+
+  // Remove "no requests" placeholder
+  const placeholder = container.querySelector('div[style]');
+  if (placeholder) placeholder.remove();
+
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 8);
+
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  entry.innerHTML = `
+    <span class="log-method">${method}</span><span style="color: var(--text-dim)">${uri}</span>
+    <span style="float:right; font-size: 0.6rem">${code}</span>
+    <span class="log-time">${time}</span>
+    ${detail ? `<div class="log-detail">${detail}</div>` : ''}
+  `;
+  container.insertBefore(entry, container.firstChild);
+
+  // Keep log trimmed
+  while (container.children.length > 30) {
+    container.removeChild(container.lastChild);
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+
+init();
+</script>
+</body>
+</html>
