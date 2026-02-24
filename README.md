@@ -80,3 +80,22 @@ pytest test_htcpcp.py -v
 
 - [RFC 2324](https://tools.ietf.org/html/rfc2324) — Hyper Text Coffee Pot Control Protocol (1 April 1998)
 - [RFC 7168](https://tools.ietf.org/html/rfc7168) — HTCPCP-TEA: Tea Efflux Appliances (1 April 2014)
+
+---
+
+## Why `server.py` instead of `main.py` + uvicorn?
+
+uvicorn validates HTTP method names at the socket level, before h11 even parses the request.
+`BREW`, `WHEN`, and `PROPFIND` are not registered IANA methods, so uvicorn rejects them with
+`Invalid HTTP request received` regardless of any h11 patch.
+
+`server.py` is a raw asyncio TCP server with a minimal HTTP/1.1 parser that accepts any valid
+RFC 7230 token as a method name — which `BREW`, `WHEN`, and `PROPFIND` are.
+
+```bash
+# Use this instead of uvicorn:
+python server.py
+```
+
+`main.py` is kept for reference and for the test suite (FastAPI TestClient bypasses
+the HTTP layer entirely, so custom methods work fine in tests).
