@@ -3,8 +3,9 @@ HTCPCP/1.0 — Data Models
 RFC 2324 (coffee) + RFC 7168 (tea)
 """
 
-from enum import Enum
+import asyncio
 from dataclasses import dataclass, field
+from enum import Enum
 from time import time
 
 
@@ -45,6 +46,12 @@ class CoffeePot:
     varieties: list[str] = field(default_factory=list)
     status: PotStatus = field(default=PotStatus.IDLE)
     brew_history: list[BrewRecord] = field(default_factory=list)
+    brew_version: int = field(default=0)
+
+    # Per-pot asyncio lock — prevents concurrent BREWs racing on level/status.
+    # Classic TOCTOU: two requests both read level > 0, both proceed,
+    # pot goes negative. Not RFC compliant. Definitely not coffee compliant.
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
@@ -56,6 +63,7 @@ class CoffeePot:
             "level_display": f"{self.level}/{self.capacity} cups",
             "varieties": self.varieties,
             "brew_count": len(self.brew_history),
+            "brew_version": self.brew_version,
         }
 
     def add_brew(self, additions: dict) -> BrewRecord:
@@ -65,14 +73,15 @@ class CoffeePot:
             additions=additions,
         )
         self.brew_history.append(record)
+        self.brew_version += 1
         return record
 
 
 # ── RFC 2324 §2.1.1 — Supported additions ────────────────────────────────────
 
 SUPPORTED_ADDITIONS: dict[str, list[str]] = {
-    "milk-type": ["Cream", "Half-and-half", "Whole-milk", "Part-Skim", "Skim", "Non-Dairy"],
-    "syrup-type": ["Vanilla", "Almond", "Raspberry", "Chocolate"],
+    "milk-type":      ["Cream", "Half-and-half", "Whole-milk", "Part-Skim", "Skim", "Non-Dairy"],
+    "syrup-type":     ["Vanilla", "Almond", "Raspberry", "Chocolate"],
     "sweetener-type": ["Sugar", "Honey", "Artificial"],
     "spice-type":     ["Cinnamon", "Cardamom"],
     "alcohol-type":   ["Whisky", "Rum", "Kahlua", "Aquavit"],

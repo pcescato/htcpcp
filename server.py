@@ -39,6 +39,7 @@ STATUS_TEXTS = {
     404: "Not Found",
     405: "Method Not Allowed",
     406: "Not Acceptable",
+    409: "Conflict",
     418: "I'm a Teapot",
     503: "Service Unavailable",
 }
@@ -48,7 +49,7 @@ def http_response(status: int, body: dict) -> bytes:
     status_text = STATUS_TEXTS.get(status, "Unknown")
     headers = (
         f"HTTP/1.1 {status} {status_text}\r\n"
-        f"Content-Type: application/json\r\n"
+        f"Content-Type: message/coffeepot\r\n"
         f"Content-Length: {len(body_bytes)}\r\n"
         f"X-Protocol: HTCPCP/1.0\r\n"
         f"X-RFC: RFC-2324, RFC-7168\r\n"
@@ -60,19 +61,14 @@ def http_response(status: int, body: dict) -> bytes:
 
 
 async def read_request(reader: asyncio.StreamReader) -> bytes:
-    """
-    Read until we have the full HTTP head (double CRLF).
-    Then read Content-Length bytes of body if present.
-    """
+    """Read until double CRLF, then read Content-Length body if present."""
     raw = b""
-    # Read until \r\n\r\n
     while b"\r\n\r\n" not in raw:
         chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
         if not chunk:
             break
         raw += chunk
 
-    # Read body if Content-Length is set
     head = raw.split(b"\r\n\r\n")[0].decode(errors="replace")
     for line in head.split("\r\n")[1:]:
         if line.lower().startswith("content-length:"):
@@ -99,7 +95,7 @@ def parse_request(raw: bytes):
             return None
 
         method = parts[0].upper()
-        path   = parts[1].split("?")[0]  # strip query string
+        path   = parts[1].split("?")[0]
 
         headers = {}
         for line in lines[1:]:
@@ -127,11 +123,12 @@ def parse_additions(header: str | None) -> dict:
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
-def handle_brew(pot_id: str, headers: dict) -> bytes:
+async def handle_brew(pot_id: str, headers: dict) -> bytes:
     pot = get_pot(pot_id)
     if not pot:
         return http_response(404, {"error": "Not Found", "pot_id": pot_id})
 
+    # RFC 2324 §2.3.2 — teapot → 418, no lock needed, pot_type is immutable
     if pot.pot_type == PotType.TEAPOT:
         log.warning("htcpcp.teapot_detected", pot_id=pot_id)
         return http_response(418, {
@@ -144,13 +141,7 @@ def handle_brew(pot_id: str, headers: dict) -> bytes:
             "suggestion": "Try /coffee/pot-1 instead.",
         })
 
-    if pot.level == 0:
-        return http_response(503, {
-            "error": "Service Unavailable",
-            "message": "Pot is empty. Refill required.",
-            "note": "503, not 418 — the pot is a coffee pot, just empty.",
-        })
-
+    # Validate additions before acquiring the lock — pure read, no race risk
     additions = parse_additions(headers.get("accept-additions"))
 
     if "decaf" in additions:
@@ -171,34 +162,63 @@ def handle_brew(pot_id: str, headers: dict) -> bytes:
             "unsupported_additions": unsupported,
         })
 
-    record  = pot.add_brew(additions)
-    pot.level -= 1
-    has_milk = "milk-type" in additions
-    pot.status = PotStatus.POURING_MILK if has_milk else PotStatus.BREWING
+    # ── Critical section — acquire per-pot lock ───────────────────────────────
+    # Prevents concurrent BREWs from racing on level/status.
+    # Two requests both read level > 0, both proceed → pot goes negative.
+    # Not RFC compliant. Definitely not coffee compliant.
+    async with pot._lock:
+
+        # Re-check level inside the lock — another BREW may have emptied it
+        if pot.level == 0:
+            return http_response(503, {
+                "error": "Service Unavailable",
+                "message": "Pot is empty. Refill required.",
+                "note": "503, not 418 — the pot is a coffee pot, just empty.",
+            })
+
+        # CAS check — optional header X-Brew-Version for optimistic concurrency
+        expected_version = headers.get("x-brew-version")
+        if expected_version is not None:
+            if int(expected_version) != pot.brew_version:
+                return http_response(409, {
+                    "error": "Conflict",
+                    "message": "Pot was modified by a concurrent BREW.",
+                    "current_version": pot.brew_version,
+                    "hint": "Retry with current brew_version.",
+                })
+
+        record   = pot.add_brew(additions)   # increments brew_version
+        pot.level -= 1
+        has_milk  = "milk-type" in additions
+        pot.status = PotStatus.POURING_MILK if has_milk else PotStatus.BREWING
+
+    # ── End critical section ──────────────────────────────────────────────────
 
     log.info("htcpcp.brew",
         pot_id=pot_id, brew_id=record.id,
+        brew_version=pot.brew_version,
         additions=additions, milk_pouring=has_milk,
     )
     return http_response(200, {
-        "brew_id":        record.id,
-        "message":        "Coffee is brewing.",
-        "pot":            pot_id,
+        "brew_id":          record.id,
+        "message":          "Coffee is brewing.",
+        "pot":              pot_id,
+        "brew_version":     pot.brew_version,
         "accept-additions": additions,
-        "milk_pouring":   has_milk,
-        "when_required":  has_milk,
-        "protocol":       "HTCPCP/1.0",
+        "milk_pouring":     has_milk,
+        "when_required":    has_milk,
+        "protocol":         "HTCPCP/1.0",
     })
 
 
-def handle_get_status(pot_id: str, _headers: dict) -> bytes:
+async def handle_get_status(pot_id: str, _headers: dict) -> bytes:
     pot = get_pot(pot_id)
     if not pot:
         return http_response(404, {"error": "Not Found", "pot_id": pot_id})
     return http_response(200, pot.to_dict())
 
 
-def handle_get_history(pot_id: str, _headers: dict) -> bytes:
+async def handle_get_history(pot_id: str, _headers: dict) -> bytes:
     pot = get_pot(pot_id)
     if not pot:
         return http_response(404, {"error": "Not Found", "pot_id": pot_id})
@@ -209,7 +229,7 @@ def handle_get_history(pot_id: str, _headers: dict) -> bytes:
     })
 
 
-def handle_propfind(pot_id: str, _headers: dict) -> bytes:
+async def handle_propfind(pot_id: str, _headers: dict) -> bytes:
     pot = get_pot(pot_id)
     if not pot:
         return http_response(404, {"error": "Not Found", "pot_id": pot_id})
@@ -220,19 +240,21 @@ def handle_propfind(pot_id: str, _headers: dict) -> bytes:
     })
 
 
-def handle_when(pot_id: str, _headers: dict) -> bytes:
+async def handle_when(pot_id: str, _headers: dict) -> bytes:
     pot = get_pot(pot_id)
     if not pot:
         return http_response(404, {"error": "Not Found", "pot_id": pot_id})
 
-    if pot.status != PotStatus.POURING_MILK:
-        return http_response(200, {
-            "message": "WHEN acknowledged.",
-            "note":    "No milk was being poured, but your enthusiasm is appreciated.",
-            "rfc":     "RFC 2324 §2.1.3",
-        })
+    async with pot._lock:
+        if pot.status != PotStatus.POURING_MILK:
+            return http_response(200, {
+                "message": "WHEN acknowledged.",
+                "note":    "No milk was being poured, but your enthusiasm is appreciated.",
+                "rfc":     "RFC 2324 §2.1.3",
+            })
 
-    pot.status = PotStatus.BREWING
+        pot.status = PotStatus.BREWING
+
     log.info("htcpcp.when_milk_stopped", pot_id=pot_id)
     return http_response(200, {
         "message":        "Milk pouring stopped.",
@@ -242,7 +264,7 @@ def handle_when(pot_id: str, _headers: dict) -> bytes:
     })
 
 
-def handle_registry(_headers: dict) -> bytes:
+async def handle_registry(_pot_id, _headers: dict) -> bytes:
     from models import POT_REGISTRY
     return http_response(200, {
         "protocol": "HTCPCP/1.0",
@@ -260,11 +282,11 @@ ROUTES = [
     (re.compile(r"^/coffee/([^/]+)/history$"),    {"GET":  handle_get_history}),
     (re.compile(r"^/coffee/([^/]+)/additions$"),  {"PROPFIND": handle_propfind}),
     (re.compile(r"^/coffee/([^/]+)/stop-milk$"),  {"WHEN": handle_when}),
-    (re.compile(r"^/$"),                          {"GET":  lambda _id, h: handle_registry(h)}),
+    (re.compile(r"^/$"),                          {"GET":  handle_registry}),
 ]
 
 
-def dispatch(method: str, path: str, headers: dict) -> bytes:
+async def dispatch(method: str, path: str, headers: dict) -> bytes:
     if method == "BREW" and not path.startswith("/coffee/"):
         return http_response(418, {
             "error": "Wrong universe",
@@ -282,7 +304,7 @@ def dispatch(method: str, path: str, headers: dict) -> bytes:
                     "error":   "Method Not Allowed",
                     "allowed": list(method_map.keys()),
                 })
-            return handler(pot_id, headers)
+            return await handler(pot_id, headers)
 
     return http_response(404, {"error": "Not Found", "path": path})
 
@@ -305,7 +327,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
         method, path, headers, body = parsed
         log.info("htcpcp.request", method=method, path=path, peer=str(peer))
 
-        response = dispatch(method, path, headers)
+        response = await dispatch(method, path, headers)
         writer.write(response)
         await writer.drain()
 
@@ -335,7 +357,9 @@ async def main():
     print(f"\n☕  HTCPCP/1.0 — RFC 2324  ({HOST}:{PORT})\n")
     print(f"    curl -X BREW http://{HOST}:{PORT}/coffee/pot-1 \\")
     print(f'         -H "Accept-Additions: milk-type=Whole-milk; alcohol-type=Whisky"')
-    print(f"\n    curl http://{HOST}:{PORT}/\n")
+    print(f"\n    # Optimistic concurrency:")
+    print(f"    curl -X BREW http://{HOST}:{PORT}/coffee/pot-1 \\")
+    print(f'         -H "X-Brew-Version: 0"  # → 409 if pot was modified\n')
     async with server:
         await server.serve_forever()
 
